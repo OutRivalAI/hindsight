@@ -18,16 +18,30 @@ from datetime import datetime
 
 # Import from parent memora package
 from memora import TemporalSemanticMemory
+from memora.embeddings import Embeddings
 
 import logging
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(
-    title="Agent Memory API",
-    version="1.0.0",
-    description="""
+
+def create_app(embeddings: Optional[Embeddings] = None, db_url: Optional[str] = None) -> FastAPI:
+    """
+    Create and configure the FastAPI application.
+
+    Args:
+        embeddings: Optional custom embeddings implementation. If not provided,
+                   uses default SentenceTransformersEmbeddings.
+        db_url: Optional database URL. If not provided, uses DATABASE_URL env var.
+
+    Returns:
+        Configured FastAPI application
+    """
+    app = FastAPI(
+        title="Agent Memory API",
+        version="1.0.0",
+        description="""
 A temporal-semantic memory system for AI agents that stores, retrieves, and reasons over memories.
 
 ## Features
@@ -46,18 +60,42 @@ The system uses:
 - **Semantic Links**: Connect semantically similar memories
 - **Entity Links**: Connect memories that mention the same entities
 - **Spreading Activation**: Intelligent traversal for memory retrieval
-    """,
-    contact={
-        "name": "Memory System",
-    },
-    license_info={
-        "name": "Apache 2.0",
-        "url": "https://www.apache.org/licenses/LICENSE-2.0.html",
-    }
-)
+        """,
+        contact={
+            "name": "Memory System",
+        },
+        license_info={
+            "name": "Apache 2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.html",
+        }
+    )
 
-# Mount static files
-app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+    # Mount static files
+    app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+
+    # Initialize memory system with custom embeddings if provided
+    memory = TemporalSemanticMemory(db_url=db_url, embeddings=embeddings)
+
+    @app.on_event("startup")
+    async def startup_event():
+        """Initialize memory system on startup."""
+        await memory.initialize()
+        logging.info("Memory system initialized")
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        """Cleanup memory system on shutdown."""
+        await memory.close()
+        logging.info("Memory system closed")
+
+    # Store memory instance on app for route handlers to access
+    app.state.memory = memory
+
+    return app
+
+
+# Create default app instance with default embeddings
+app = create_app()
 
 
 class SearchRequest(BaseModel):
@@ -239,20 +277,6 @@ class GraphDataResponse(BaseModel):
         }
 
 
-memory = TemporalSemanticMemory()
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize memory system on startup."""
-    await memory.initialize()
-    logging.info("Memory system initialized")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup memory system on shutdown."""
-    await memory.close()
-    logging.info("Memory system closed")
-
 @app.get("/", include_in_schema=False)
 async def index():
     """Serve the visualization page."""
@@ -272,7 +296,7 @@ async def api_graph(
 ):
     """Get graph data from database, optionally filtered by agent_id and fact_type."""
     try:
-        data = await memory.get_graph_data(agent_id, fact_type)
+        data = await app.state.memory.get_graph_data(agent_id, fact_type)
         return data
     except Exception as e:
         import traceback
@@ -292,7 +316,7 @@ async def api_search(request: SearchRequest):
     """Run a search and return results with trace."""
     try:
         # Run search with tracing
-        results, trace = await memory.search_async(
+        results, trace = await app.state.memory.search_async(
             agent_id=request.agent_id,
             query=request.query,
             thinking_budget=request.thinking_budget,
@@ -326,7 +350,7 @@ async def api_world_search(request: SearchRequest):
     """Search only world facts (general knowledge about the world)."""
     try:
         # Run search with fact_type filter for 'world'
-        results, trace = await memory.search_async(
+        results, trace = await app.state.memory.search_async(
             agent_id=request.agent_id,
             query=request.query,
             thinking_budget=request.thinking_budget,
@@ -361,7 +385,7 @@ async def api_agent_search(request: SearchRequest):
     """Search only agent facts (facts about what the agent did)."""
     try:
         # Run search with fact_type filter for 'agent'
-        results, trace = await memory.search_async(
+        results, trace = await app.state.memory.search_async(
             agent_id=request.agent_id,
             query=request.query,
             thinking_budget=request.thinking_budget,
@@ -396,7 +420,7 @@ async def api_opinion_search(request: SearchRequest):
     """Search only opinion facts (agent's formed opinions and perspectives)."""
     try:
         # Run search with fact_type filter for 'opinion'
-        results, trace = await memory.search_async(
+        results, trace = await app.state.memory.search_async(
             agent_id=request.agent_id,
             query=request.query,
             thinking_budget=request.thinking_budget,
@@ -440,7 +464,7 @@ This endpoint:
 async def api_think(request: ThinkRequest):
     try:
         # Use the memory system's think_async method
-        result = await memory.think_async(
+        result = await app.state.memory.think_async(
             agent_id=request.agent_id,
             query=request.query,
             thinking_budget=request.thinking_budget,
@@ -470,7 +494,7 @@ async def api_think(request: ThinkRequest):
 async def api_agents():
     """Get list of available agents from database."""
     try:
-        agent_list = await memory.list_agents()
+        agent_list = await app.state.memory.list_agents()
         return AgentsResponse(agents=agent_list)
     except Exception as e:
         import traceback
@@ -523,7 +547,7 @@ async def api_batch_put(request: BatchPutRequest):
             contents.append(content_dict)
 
         # Call put_batch_async
-        result = await memory.put_batch_async(
+        result = await app.state.memory.put_batch_async(
             agent_id=request.agent_id,
             contents=contents,
             document_id=request.document_id,

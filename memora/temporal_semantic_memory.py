@@ -12,11 +12,10 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 import asyncpg
-from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 import asyncio
+from .embeddings import Embeddings, SentenceTransformersEmbeddings
 import time
-from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import uuid
 import logging
@@ -38,44 +37,6 @@ def utcnow():
 # Logger for memory system
 logger = logging.getLogger(__name__)
 
-# Global process pool for parallel embedding generation
-# Each process loads its own copy of the embedding model
-# This provides TRUE parallelism for CPU-bound embedding operations
-_PROCESS_POOL = None
-_EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
-
-# Process-local model cache (one per worker process)
-_worker_model = None
-
-
-def _get_worker_model():
-    """Get or load the embedding model in worker process."""
-    global _worker_model
-    if _worker_model is None:
-        _worker_model = SentenceTransformer(_EMBEDDING_MODEL_NAME)
-    return _worker_model
-
-
-def _encode_batch_worker(texts: List[str]) -> List[List[float]]:
-    """
-    Worker function for process pool - encodes texts to embeddings.
-
-    This function runs in a separate process and loads its own model.
-    """
-    model = _get_worker_model()
-    embeddings = model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
-    return [emb.tolist() for emb in embeddings]
-
-
-def _get_process_pool():
-    """Get or create the global process pool."""
-    global _PROCESS_POOL
-    if _PROCESS_POOL is None:
-        # Use 4 worker processes for true parallelism
-        # Adjust based on your CPU cores (each process loads ~500MB model)
-        _PROCESS_POOL = ProcessPoolExecutor(max_workers=4)
-    return _PROCESS_POOL
-
 
 class TemporalSemanticMemory(
     EmbeddingOperationsMixin,
@@ -92,14 +53,16 @@ class TemporalSemanticMemory(
     def __init__(
         self,
         db_url: Optional[str] = None,
-        embedding_model: str = "BAAI/bge-small-en-v1.5",
+        embeddings: Optional[Embeddings] = None,
+        embedding_model: Optional[str] = None,
     ):
         """
         Initialize the temporal + semantic memory system.
 
         Args:
             db_url: PostgreSQL connection URL (postgresql://user:pass@host:port/dbname)
-            embedding_model: Name of the SentenceTransformer model to use
+            embeddings: Embeddings implementation to use. If not provided, uses SentenceTransformersEmbeddings
+            embedding_model: (Deprecated) Name of the SentenceTransformer model to use. Use embeddings parameter instead.
         """
         load_dotenv()
 
@@ -118,10 +81,13 @@ class TemporalSemanticMemory(
         # Initialize entity resolver (will be created in initialize())
         self.entity_resolver = None
 
-        # Initialize local embedding model (384 dimensions)
-        logger.info(f"Loading embedding model: {embedding_model}...")
-        self.embedding_model = SentenceTransformer(embedding_model)
-        logger.info(f"Model loaded (embedding dim: {self.embedding_model.get_sentence_embedding_dimension()})")
+        # Initialize embeddings
+        if embeddings is not None:
+            self.embeddings = embeddings
+        else:
+            # Default to SentenceTransformersEmbeddings
+            model_name = embedding_model or "BAAI/bge-small-en-v1.5"
+            self.embeddings = SentenceTransformersEmbeddings(model_name)
 
         # Background queue for access count updates (to avoid blocking searches)
         self._access_count_queue = asyncio.Queue()

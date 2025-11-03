@@ -16,6 +16,7 @@ from .search_trace import (
     SearchPhaseMetrics,
 )
 from .search_tracer import SearchTracer
+from .embeddings import Embeddings, SentenceTransformersEmbeddings
 
 __all__ = [
     "TemporalSemanticMemory",
@@ -29,5 +30,7 @@ __all__ = [
     "PruningDecision",
     "SearchSummary",
     "SearchPhaseMetrics",
+    "Embeddings",
+    "SentenceTransformersEmbeddings",
 ]
 __version__ = "0.1.0"

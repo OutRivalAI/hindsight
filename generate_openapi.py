@@ -11,7 +11,7 @@ from pathlib import Path
 # Add parent directory to path to import memory module
 sys.path.insert(0, str(Path(__file__).parent))
 
-from memory.web.server import app
+from memora.web.server import app
 
 def generate_openapi_spec(output_path: str = "openapi.json"):
     """Generate OpenAPI spec and save to file."""
