@@ -1534,6 +1534,45 @@ def create_app(
         app.include_router(extension_router, prefix="/ext", tags=["Extension"])
         logging.info("HTTP extension router mounted at /ext/")
 
+
+    # OutRival customizations: Path prefix and API key auth
+    import os
+    
+    # API Key authentication middleware
+    api_key = os.environ.get("OUTRIVAL_API_KEY", "")
+    if api_key:
+        from fastapi import Request
+        from fastapi.responses import JSONResponse
+        
+        @app.middleware("http")
+        async def api_key_auth_middleware(request: Request, call_next):
+            """Verify X-API-Key header on all requests except health check."""
+            if request.url.path in ["/health", "/metrics"]:
+                return await call_next(request)
+            
+            provided_key = request.headers.get("X-API-Key", "")
+            if provided_key != api_key:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Invalid or missing API key"}
+                )
+            return await call_next(request)
+        
+        logging.info("API key authentication enabled")
+
+    # Path prefix support for ALB routing (e.g., /hindsight)
+    path_prefix = os.environ.get("HINDSIGHT_API_PATH_PREFIX", "")
+    if path_prefix:
+        wrapper = FastAPI(title="Hindsight API")
+        wrapper.mount(path_prefix, app)
+        
+        @wrapper.get("/health")
+        async def root_health():
+            return {"status": "healthy"}
+        
+        logging.info(f"Hindsight API mounted at {path_prefix}")
+        return wrapper
+
     return app
 
 
