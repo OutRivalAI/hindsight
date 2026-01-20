@@ -1547,7 +1547,8 @@ def create_app(
         @app.middleware("http")
         async def api_key_auth_middleware(request: Request, call_next):
             """Verify X-API-Key header on all requests except health check."""
-            if request.url.path in ["/health", "/metrics"]:
+            # Skip auth for health/metrics endpoints (including when mounted under path prefix)
+            if request.url.path.endswith("/health") or request.url.path.endswith("/metrics") or request.url.path == "/health" or request.url.path == "/metrics":
                 return await call_next(request)
             
             provided_key = request.headers.get("X-API-Key", "")
