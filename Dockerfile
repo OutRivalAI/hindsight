@@ -1,11 +1,9 @@
 # OutRival Hindsight - API Only Build
-# Based on upstream vectorize-io/hindsight
-
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies and uv
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -16,7 +14,12 @@ RUN apt-get update && apt-get install -y \
 # Copy dependency files
 COPY hindsight-api/pyproject.toml hindsight-api/README.md ./
 
-# Install dependencies
+# Remove local ML model dependencies to reduce image size (we use OpenAI)
+RUN sed -i '/"sentence-transformers/d' pyproject.toml && \
+    sed -i '/"transformers/d' pyproject.toml && \
+    sed -i '/"torch/d' pyproject.toml
+
+# Sync dependencies
 RUN uv sync
 
 # Copy source code
@@ -31,8 +34,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
 
 EXPOSE 8888
 
-# Default environment
 ENV HINDSIGHT_API_HOST=0.0.0.0
 ENV HINDSIGHT_API_PORT=8888
+ENV PATH="/app/.venv/bin:$PATH"
 
 CMD ["python", "-m", "hindsight_api.main"]
